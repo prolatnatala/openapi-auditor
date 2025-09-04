@@ -1,4 +1,6 @@
 openapi: 3.0.3
+servers:
+  - url: https://api.example.com/api
 info:
   title: Simple API
   version: 1.0.0
@@ -10,3 +12,38 @@ paths:
       responses:
         '200':
           description: OK
+  /user:
+    get:
+      summary: List users (bad plural)
+      operationId: listUsersOp
+      responses:
+        '200':
+          description: OK
+  /createUser:
+    post:
+      summary: Create user
+      operationId: createUserOp
+      responses:
+        '201':
+          description: Created
+  /search:
+    get:
+      operationId: searchOp
+      parameters:
+        - name: queryText     # camel
+          in: query
+          schema: { type: string }
+        - name: page_size     # snake → смешение
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object } } } }        
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        userId:        # camel
+          type: string
+        created_at:    # snake  → должно триггернуть смешение
+          type: string

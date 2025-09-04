@@ -4,7 +4,7 @@ from rich.console import Console              # красивый вывод в �
 from rich.panel import Panel                  # рамочки для итогов
 from rich.markdown import Markdown            # чтобы печатать Markdown красиво
 from .loader import load_spec                 # наша функция загрузки спеки
-from .checks import check_unique_operation_ids  # наша проверка
+from .checks import check_unique_operation_ids, check_path_params_defined, check_verbs_in_path, check_plural_collections, check_json_keys_style, check_param_names_style, check_versioning_present
 
 app = typer.Typer(help="OpenAPI Auditor (MVP)")   # создаём CLI-приложение
 console = Console()                               # объект для красивого вывода
@@ -41,10 +41,76 @@ def audit(spec_path: Path, out: Path = Path("audit_report.md")):
         for line in opid_issues:
             console.print(f"  • {line}")
 
-    # 2) Пишем Markdown-отчёт
+    # 2) Проверка соответствия {pathParam} ↔ parameters (in: path, required: true)
+    path_param_issues = check_path_params_defined(spec)
+    if not path_param_issues:
+        console.print("[green]:white_check_mark: path parameters — OK[/green]")
+    else:
+        console.print("[yellow]:warning: path parameter issues found:[/yellow]")
+        for line in path_param_issues:
+            console.print(f"  • {line}")
+
+    # 3) Глаголы в path
+    verb_path_issues = check_verbs_in_path(spec)
+    if not verb_path_issues:
+        console.print("[green]:white_check_mark: path verbs — OK[/green]")
+    else:
+        console.print("[yellow]:warning: verb-in-path issues found:[/yellow]")
+        for line in verb_path_issues:
+            console.print(f"  • {line}")
+
+    # 4) Множественное число для коллекций
+    plural_issues = check_plural_collections(spec)
+    if not plural_issues:
+        console.print("[green]:white_check_mark: plural collections — OK[/green]")
+    else:
+        console.print("[yellow]:warning: pluralization issues found:[/yellow]")
+        for line in plural_issues:
+            console.print(f"  • {line}")   
+
+    # 5) Стиль JSON-ключей
+    json_style_issues = check_json_keys_style(spec)
+    if not json_style_issues:
+        console.print("[green]:white_check_mark: JSON key style — OK[/green]")
+    else:
+        console.print("[yellow]:warning: JSON key style issues:[/yellow]")
+        for line in json_style_issues:
+            console.print(f"  • {line}")
+
+    # 6) Стиль имён параметров (path/query)
+    param_style_issues = check_param_names_style(spec)
+    if not param_style_issues:
+        console.print("[green]:white_check_mark: parameter name style — OK[/green]")
+    else:
+        console.print("[yellow]:warning: parameter name style issues:[/yellow]")
+        for line in param_style_issues:
+            console.print(f"  • {line}")
+
+    # 7) Версионирование
+    versioning_issues = check_versioning_present(spec)
+    if not versioning_issues:
+        console.print("[green]:white_check_mark: versioning (servers/basePath) — OK[/green]")
+    else:
+        console.print("[yellow]:warning: versioning issues:[/yellow]")
+        for line in versioning_issues:
+            console.print(f"  • {line}")                     
+
+    # 8) Пишем Markdown-отчёт
     all_issues = []
     if opid_issues:
         all_issues.append("## operationId\n" + "\n".join(f"- {x}" for x in opid_issues))
+    if path_param_issues:
+        all_issues.append("## path parameters\n" + "\n".join(f"- {x}" for x in path_param_issues))
+    if verb_path_issues:
+        all_issues.append("## verbs in path\n" + "\n".join(f"- {x}" for x in verb_path_issues))
+    if plural_issues:
+        all_issues.append("## plural collections\n" + "\n".join(f"- {x}" for x in plural_issues))
+    if json_style_issues:
+        all_issues.append("## JSON key style\n" + "\n".join(f"- {x}" for x in json_style_issues))
+    if param_style_issues:
+        all_issues.append("## parameter name style\n" + "\n".join(f"- {x}" for x in param_style_issues))
+    if versioning_issues:
+        all_issues.append("## versioning\n" + "\n".join(f"- {x}" for x in versioning_issues))    
 
     # если нет проблем — сохранится "No issues found."
     write_markdown_report(out, all_issues)
