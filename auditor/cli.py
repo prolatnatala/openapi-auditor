@@ -27,6 +27,15 @@ def write_markdown_report(target: Path, lines: list[str]) -> None:
     body = "\n".join(f"- {line}" for line in lines) if lines else "_No issues found._"
     target.write_text(header + body + "\n", encoding="utf-8")
 
+def write_markdown_report(target: Path, sections: list[str]) -> None:
+    """
+    sections: список готовых Markdown-блоков вида
+      "## section title\n- item 1\n- item 2"
+    """
+    header = "# OpenAPI Audit Report\n\n"
+    body = "\n\n".join(sections) if sections else "_No issues found._"
+    target.write_text(header + body + "\n", encoding="utf-8")
+
 @app.command("audit")                           # ЯВНО называем команду "audit"
 def audit(spec_path: Path, out: Path = Path("audit_report.md")):
     """
