@@ -61,6 +61,7 @@ def check_unique_operation_ids(spec: Dict) -> List[str]:
             seen[op_id] = (path, method)
 
     return issues
+
 def check_path_params_defined(spec: Dict) -> List[str]:
     """
     Для каждого пути вида /users/{id} проверяем:
@@ -158,6 +159,7 @@ def check_verbs_in_path(spec: Dict) -> List[str]:
         if any(lower.startswith(v) for v in VERB_TRIGGERS):
             issues.append(f"[PATH {path}] avoid verbs in URL; use resource nouns + HTTP methods")
     return issues
+
 def _path_has_template(path: str) -> bool:
     # Есть ли {param} в самом пути
     return bool(PARAM_PATTERN.search(path))
@@ -250,7 +252,6 @@ def check_json_keys_style(spec: Dict) -> List[str]:
 
     return issues
 
-
 def _collect_param_names(spec: Dict) -> List[str]:
     names: List[str] = []
     paths = spec.get("paths", {}) or {}
@@ -335,3 +336,209 @@ def check_versioning_present(spec: Dict) -> List[str]:
 
     # если формат не распознан — промолчим
     return issues
+
+# ---- schema completeness & types/formats ----
+_ALLOWED_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
+_ALLOWED_FORMATS = {
+    "string": {"date", "date-time", "uuid", "email", "uri", "binary", "byte", "password"},
+    "integer": {"int32", "int64"},
+    "number": {"float", "double"},
+    # boolean/array/object обычно без format
+}
+
+def _iter_object_schemas(spec: Dict):
+    """
+    Итерируемся по всем 'object'-схемам в components и в request/response (application/json).
+    Отдаём кортежи: (where, schema_dict), где where — удобная строка-метка.
+    """
+    # a) components.schemas.* (только словари)
+    comps = spec.get("components", {}) or {}
+    schemas = comps.get("schemas", {}) or {}
+    for name, sch in schemas.items():
+        if isinstance(sch, Dict):
+            yield (f"components.schemas.{name}", sch)
+
+    # b) paths.*.*.requestBody / responses.* (application/json)
+    paths = spec.get("paths", {}) or {}
+    for pth, item in paths.items():
+        if not isinstance(item, Dict):
+            continue
+        for method, op in item.items():
+            if method.lower() not in HTTP_METHODS or not isinstance(op, Dict):
+                continue
+
+            # requestBody
+            rb = op.get("requestBody")
+            if isinstance(rb, Dict):
+                content = rb.get("content", {}) or {}
+                if isinstance(content, Dict):
+                    aj = content.get("application/json")
+                    if isinstance(aj, Dict):
+                        sch = aj.get("schema")
+                        if isinstance(sch, Dict):
+                            yield (f"{method.upper()} {pth} requestBody", sch)
+
+            # responses
+            responses = op.get("responses", {}) or {}
+            for code, r in responses.items():
+                if not isinstance(r, Dict):
+                    continue
+                content = r.get("content", {}) or {}
+                if isinstance(content, Dict):
+                    aj = content.get("application/json")
+                    if isinstance(aj, Dict):
+                        sch = aj.get("schema")
+                        if isinstance(sch, Dict):
+                            yield (f"{method.upper()} {pth} response {code}", sch)
+
+def _schema_props_and_required(schema: Dict):
+    """Возвращает (properties:dict, required:set[str]) для object-схемы (если не object — пустые)."""
+    if not isinstance(schema, Dict):
+        return {}, set()
+    # может быть $ref/allOf/oneOf/anyOf — для MVP обрабатываем простые object
+    if schema.get("type") != "object" and "properties" not in schema:
+        return {}, set()
+    props = schema.get("properties", {}) or {}
+    req = set(schema.get("required", []) or [])
+    # фильтруем имена только-строки
+    props = {k: v for k, v in props.items() if isinstance(k, str) and isinstance(v, Dict)}
+    req = {x for x in req if isinstance(x, str)}
+    return props, req
+
+def check_schema_types_and_required(spec: Dict) -> List[str]:
+    """
+    Проверяем:
+      - required указывает только существующие свойства
+      - у каждого свойства есть type (если нет $ref/oneOf/anyOf/allOf)
+      - type из допустимых значений
+      - format согласован с type (если указан)
+    """
+    issues: List[str] = []
+    for where, sch in _iter_object_schemas(spec):
+        props, req = _schema_props_and_required(sch)
+
+        # required -> существующие поля
+        for name in sorted(req):
+            if name not in props:
+                issues.append(f"[{where}] required lists '{name}', but no such property in 'properties'")
+
+        # валидность свойств
+        for name, meta in props.items():
+            # если это $ref/композиция — пропустим на этом шаге
+            if "$ref" in meta or any(k in meta for k in ("oneOf", "anyOf", "allOf")):
+                continue
+
+            ty = meta.get("type")
+            if not ty:
+                issues.append(f"[{where}] property '{name}' missing 'type'")
+                continue
+            if ty not in _ALLOWED_TYPES:
+                issues.append(f"[{where}] property '{name}' has unknown type '{ty}'")
+
+            fmt = meta.get("format")
+            if fmt:
+                allowed = _ALLOWED_FORMATS.get(ty, set())
+                if allowed and fmt not in allowed:
+                    issues.append(f"[{where}] property '{name}' uses format '{fmt}' not typical for type '{ty}'")
+    return issues
+
+def check_nullable_vs_optional(spec: Dict) -> List[str]:
+    """
+    Предостережения:
+      - поле 'nullable: true' и одновременно НЕ в required → возможно, лучше сделать поле опциональным без null
+      - использование JSON Schema 'null' без OAS 'nullable' (эвристика)
+    """
+    issues: List[str] = []
+    for where, sch in _iter_object_schemas(spec):
+        props, req = _schema_props_and_required(sch)
+
+        for name, meta in props.items():
+            nullable = meta.get("nullable") is True
+            is_required = name in req
+
+            # 1) nullable + not required → предупреждение (эвристика)
+            if nullable and not is_required:
+                issues.append(f"[{where}] property '{name}' is nullable but not required; "
+                              "consider using optional (omit) vs explicit null")
+
+            # 2) JSON Schema 'null' без nullable
+            # cases: type: ['string','null']  или anyOf/oneOf содержит {'type':'null'}
+            ty = meta.get("type")
+            has_null_in_type = isinstance(ty, list) and "null" in ty or ty == "null"
+            has_null_in_any = any(isinstance(alt, Dict) and alt.get("type") == "null"
+                                  for key in ("oneOf","anyOf") if isinstance(meta.get(key), list)
+                                  for alt in meta.get(key)) if any(k in meta for k in ("oneOf","anyOf")) else False
+
+            if (has_null_in_type or has_null_in_any) and not nullable:
+                issues.append(f"[{where}] property '{name}' allows JSON Schema null but 'nullable: true' is not set")
+    return issues
+
+def check_examples_presence(spec: Dict) -> List[str]:
+    """
+    Требуем хотя бы один example для:
+      - requestBody (application/json)
+      - 2xx response (application/json)
+    Дополнительно: крупные компоненты-схемы (>=3 свойств) — пример желателен.
+    """
+    issues: List[str] = []
+
+    # operations: request/response
+    for path, method, op in iter_operations(spec):
+        # request
+        rb = op.get("requestBody")
+        if isinstance(rb, Dict):
+            content = rb.get("content", {}) or {}
+            aj = content.get("application/json")
+            if isinstance(aj, Dict):
+                has = bool(aj.get("example") or aj.get("examples"))
+                schema = aj.get("schema", {}) or {}
+                if not has and isinstance(schema, Dict) and not (schema.get("example") or schema.get("examples")):
+                    issues.append(f"[{method.upper()} {path}] requestBody (application/json) has no example")
+
+        # 2xx responses
+        responses = op.get("responses", {}) or {}
+        for code, r in responses.items():
+            if not isinstance(r, Dict):
+                continue
+            if not str(code).startswith("2"):
+                continue
+            content = r.get("content", {}) or {}
+            aj = content.get("application/json")
+            if isinstance(aj, Dict):
+                has = bool(aj.get("example") or aj.get("examples"))
+                schema = aj.get("schema", {}) or {}
+                if not has and isinstance(schema, Dict) and not (schema.get("example") or schema.get("examples")):
+                    issues.append(f"[{method.upper()} {path}] response {code} (application/json) has no example")
+
+    # components: большие схемы — желательно иметь example
+    comps = spec.get("components", {}) or {}
+    schemas = comps.get("schemas", {}) or {}
+    for name, sch in schemas.items():
+        if not isinstance(sch, Dict):
+            continue
+        props = sch.get("properties", {}) or {}
+        if isinstance(props, Dict) and len(props) >= 3:
+            if not (sch.get("example") or sch.get("examples")):
+                issues.append(f"[components.schemas.{name}] consider adding example for larger schema")
+
+    return issues
+
+def _is_large_inline_object(schema: Dict, min_props: int = 5) -> bool:
+    if not isinstance(schema, Dict):
+        return False
+    if "$ref" in schema:
+        return False
+    if schema.get("type") == "object" and isinstance(schema.get("properties"), Dict):
+        return len(schema["properties"]) >= min_props
+    return False
+
+def check_dry_refs(spec: Dict) -> List[str]:
+    """
+    Ищем крупные inline object-схемы (>=5 свойств) в request/response и рекомендуем вынести в components + $ref.
+    """
+    issues: List[str] = []
+    for where, sch in _iter_object_schemas(spec):
+        if _is_large_inline_object(sch, min_props=5):
+            issues.append(f"[{where}] large inline object; consider extracting to components/schemas and using $ref")
+    return issues
+

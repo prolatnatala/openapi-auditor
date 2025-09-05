@@ -37,7 +37,40 @@ paths:
           in: query
           schema: { type: integer }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object } } } }        
+        '200': { description: OK, content: { application/json: { schema: { type: object } } } }
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { id: { type: integer } }  # ← без example
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: integer } } # ← без example
+    /reports:
+    get:
+      operationId: getReports
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  a: { type: string }
+                  b: { type: string }
+                  c: { type: string }
+                  d: { type: string }
+                  e: { type: string }     # 5 свойств → рекомендация вынести в components                            
 components:
   schemas:
     User:
@@ -47,3 +80,24 @@ components:
           type: string
         created_at:    # snake  → должно триггернуть смешение
           type: string
+    Product:
+      type: object
+      required: [id, price, createdAt]
+      properties:
+        id:
+          type: integer
+          format: uuid        # ← несовместимо (нарочно)
+        price:
+          # type пропущен      # ← отсутствует type
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        note:
+          type: string
+      Person:
+        type: object
+        properties:
+           middleName:
+              type: string
+              nullable: true      # ← и не в required → предупреждение

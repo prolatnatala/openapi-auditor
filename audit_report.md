@@ -6,8 +6,19 @@
 - [GET /user] collection names should be plural (e.g., '/users')
 - [GET /search] collection names should be plural (e.g., '/users')
 - ## JSON key style
-- JSON keys mix styles: camelCase (1) and snake_case (1). Choose one convention.
+- JSON keys mix styles: camelCase (11) and snake_case (1). Choose one convention.
 - ## parameter name style
 - Parameter names mix styles: camelCase (1) and snake_case (1). Use one convention across API.
 - ## versioning
 - No version segment found in servers[].url; prefer `/.../v1` style.
+- ## schema types & required
+- [components.schemas.Product] property 'id' uses format 'uuid' not typical for type 'integer'
+- [components.schemas.Product] property 'price' missing 'type'
+- ## examples
+- [GET /search] response 200 (application/json) has no example
+- [POST /orders] requestBody (application/json) has no example
+- [POST /orders] response 201 (application/json) has no example
+- [GET /orders] response 200 (application/json) has no example
+- [components.schemas.Product] consider adding example for larger schema
+- ## DRY ($ref)
+- [GET /orders response 200] large inline object; consider extracting to components/schemas and using $ref

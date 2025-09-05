@@ -4,7 +4,17 @@ from rich.console import Console              # красивый вывод в �
 from rich.panel import Panel                  # рамочки для итогов
 from rich.markdown import Markdown            # чтобы печатать Markdown красиво
 from .loader import load_spec                 # наша функция загрузки спеки
-from .checks import check_unique_operation_ids, check_path_params_defined, check_verbs_in_path, check_plural_collections, check_json_keys_style, check_param_names_style, check_versioning_present
+from .checks import (check_unique_operation_ids, 
+                     check_path_params_defined, 
+                     check_verbs_in_path, 
+                     check_plural_collections, 
+                     check_json_keys_style, 
+                     check_param_names_style, 
+                     check_versioning_present, 
+                     check_schema_types_and_required, 
+                     check_nullable_vs_optional, 
+                     check_examples_presence, 
+                     check_dry_refs)
 
 app = typer.Typer(help="OpenAPI Auditor (MVP)")   # создаём CLI-приложение
 console = Console()                               # объект для красивого вывода
@@ -93,9 +103,45 @@ def audit(spec_path: Path, out: Path = Path("audit_report.md")):
     else:
         console.print("[yellow]:warning: versioning issues:[/yellow]")
         for line in versioning_issues:
-            console.print(f"  • {line}")                     
+            console.print(f"  • {line}")
 
-    # 8) Пишем Markdown-отчёт
+    # 8) Типы/required и полнота схем
+    schema_req_issues = check_schema_types_and_required(spec)
+    if not schema_req_issues:
+        console.print("[green]:white_check_mark: schema types/required — OK[/green]")
+    else:
+        console.print("[yellow]:warning: schema types/required issues:[/yellow]")
+        for line in schema_req_issues:
+            console.print(f"  • {line}")
+
+    # 9) Nullable vs optional
+    nullable_issues = check_nullable_vs_optional(spec)
+    if not nullable_issues:
+        console.print("[green]:white_check_mark: nullable vs optional — OK[/green]")
+    else:
+        console.print("[yellow]:warning: nullable vs optional issues:[/yellow]")
+        for line in nullable_issues:
+            console.print(f"  • {line}")
+
+    # 10) Примеры в request/response и крупных схемах
+    examples_issues = check_examples_presence(spec)
+    if not examples_issues:
+        console.print("[green]:white_check_mark: examples — OK[/green]")
+    else:
+        console.print("[yellow]:warning: examples issues:[/yellow]")
+        for line in examples_issues:
+            console.print(f"  • {line}")
+
+    # 11) DRY / крупные inline-схемы → предложить $ref
+    dry_ref_issues = check_dry_refs(spec)
+    if not dry_ref_issues:
+        console.print("[green]:white_check_mark: DRY ($ref) — OK[/green]")
+    else:
+        console.print("[yellow]:warning: DRY/$ref suggestions:[/yellow]")
+        for line in dry_ref_issues:
+            console.print(f"  • {line}")                             
+
+    # 12) Пишем Markdown-отчёт
     all_issues = []
     if opid_issues:
         all_issues.append("## operationId\n" + "\n".join(f"- {x}" for x in opid_issues))
@@ -110,7 +156,16 @@ def audit(spec_path: Path, out: Path = Path("audit_report.md")):
     if param_style_issues:
         all_issues.append("## parameter name style\n" + "\n".join(f"- {x}" for x in param_style_issues))
     if versioning_issues:
-        all_issues.append("## versioning\n" + "\n".join(f"- {x}" for x in versioning_issues))    
+        all_issues.append("## versioning\n" + "\n".join(f"- {x}" for x in versioning_issues))
+    if schema_req_issues:
+        all_issues.append("## schema types & required\n" + "\n".join(f"- {x}" for x in schema_req_issues))
+    if nullable_issues:
+        all_issues.append("## nullable vs optional\n" + "\n".join(f"- {x}" for x in nullable_issues))
+    if examples_issues:
+        all_issues.append("## examples\n" + "\n".join(f"- {x}" for x in examples_issues))
+    if dry_ref_issues:
+        all_issues.append("## DRY ($ref)\n" + "\n".join(f"- {x}" for x in dry_ref_issues))
+            
 
     # если нет проблем — сохранится "No issues found."
     write_markdown_report(out, all_issues)
